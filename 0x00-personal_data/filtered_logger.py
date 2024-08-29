@@ -1,15 +1,31 @@
 #!/usr/bin/env python3
 """
-RedactingFormatter
+Definition of filter_datum function that returns an obfuscated log message
 """
-import re
 from typing import List
+import re
 import logging
-import mysql.connector
 import os
+import mysql.connector
 
 
-PII_FIELDS = ("name", "email", "phone", "ssn", "password")
+PII_FIELDS = ('name', 'email', 'phone', 'ssn', 'password')
+
+
+def filter_datum(fields: List[str], redaction: str,
+                 message: str, separator: str) -> str:
+    """
+    Return an obfuscated log message
+    Args:
+        fields (list): list of strings indicating fields to obfuscate
+        redaction (str): what the field will be obfuscated to
+        message (str): the log line to obfuscate
+        separator (str): the character separating the fields
+    """
+    for field in fields:
+        message = re.sub(field+'=.*?'+separator,
+                         field+'='+redaction+separator, message)
+    return message
 
 
 class RedactingFormatter(logging.Formatter):
@@ -21,73 +37,69 @@ class RedactingFormatter(logging.Formatter):
     SEPARATOR = ";"
 
     def __init__(self, fields: List[str]):
-        """ constructor """
         super(RedactingFormatter, self).__init__(self.FORMAT)
         self.fields = fields
 
     def format(self, record: logging.LogRecord) -> str:
-        """ generates a log"""
-        msg = logging.Formatter(self.FORMAT).format(record)
-        return filter_datum(self.fields, self.REDACTION, msg, self.SEPARATOR)
-
-
-def filter_datum(fields: List[str], redaction: str, message: str,
-                 separator: str) -> str:
-    """ A function that returns the log message obfuscated """
-    lst = message.split(separator)
-
-    for f in fields:
-        for i in range(len(lst)):
-            if lst[i].startswith(f):
-                subst = f + '=' + redaction
-                lst[i] = re.sub(lst[i], '', lst[i])
-                lst[i] = subst
-    return separator.join(lst)
+        """
+        redact the message of LogRecord instance
+        Args:
+        record (logging.LogRecord): LogRecord instance containing message
+        Return:
+            formatted string
+        """
+        message = super(RedactingFormatter, self).format(record)
+        redacted = filter_datum(self.fields, self.REDACTION,
+                                message, self.SEPARATOR)
+        return redacted
 
 
 def get_logger() -> logging.Logger:
     """
-    A function that takes no arguments and returns a logging.Logger object
+    Return a logging.Logger object
     """
-    logger = logging.getLogger('user_data')
+    logger = logging.getLogger("user_data")
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    formatter = RedactingFormatter(list(PII_FIELDS))
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+
+    handler = logging.StreamHandler()
+
+    formatter = RedactingFormatter(PII_FIELDS)
+
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
     return logger
 
 
 def get_db() -> mysql.connector.connection.MySQLConnection:
-    """ A function that returns a connector to a database """
-    c = mysql.connector.connection.MySQLConnection(
-      user=os.getenv('PERSONAL_DATA_DB_USERNAME', 'root'),
-      password=os.getenv('PERSONAL_DATA_DB_PASSWORD', ''),
-      host=os.getenv('PERSONAL_DATA_DB_HOST', 'localhost'),
-      database=os.getenv('PERSONAL_DATA_DB_NAME')
-    )
-    return c
+    """
+    """
+    user = os.getenv('PERSONAL_DATA_DB_USERNAME') or "root"
+    passwd = os.getenv('PERSONAL_DATA_DB_PASSWORD') or ""
+    host = os.getenv('PERSONAL_DATA_DB_HOST') or "localhost"
+    db_name = os.getenv('PERSONAL_DATA_DB_NAME')
+    conn = mysql.connector.connect(user=user,
+                                   password=passwd,
+                                   host=host,
+                                   database=db_name)
+    return conn
 
 
 def main():
-    """ main function """
+    """
+    main entry point
+    """
     db = get_db()
+    logger = get_logger()
     cursor = db.cursor()
     cursor.execute("SELECT * FROM users;")
-    logger = get_logger()
+    fields = cursor.column_names
     for row in cursor:
-        msg = "name={}; email={}; phone={}; ssn={}; password={};\
-ip={}; last_login={}; user_agent={}; ".format(
-            row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]
-        )
-        msg = filter_datum(list(PII_FIELDS), '***', msg, '; ')
-        logger.info(msg)
+        message = "".join("{}={}; ".format(k, v) for k, v in zip(fields, row))
+        logger.info(message.strip())
     cursor.close()
     db.close()
 
 
-if __name__ == '__main__':
-    """ Only the main function should run when the module is executed """
+if __name__ == "__main__":
     main()
