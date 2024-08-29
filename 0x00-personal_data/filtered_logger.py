@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RedactingFormatter and Database Connection
+RedactingFormatter
 """
 import re
 from typing import List
@@ -8,71 +8,86 @@ import logging
 import mysql.connector
 import os
 
+
 PII_FIELDS = ("name", "email", "phone", "ssn", "password")
 
 
 class RedactingFormatter(logging.Formatter):
-    """ Redacting Formatter class """
+    """ Redacting Formatter class
+        """
 
     REDACTION = "***"
     FORMAT = "[HOLBERTON] %(name)s %(levelname)s %(asctime)-15s: %(message)s"
-    SEPARATOR = "; "
+    SEPARATOR = ";"
 
     def __init__(self, fields: List[str]):
-        """ Initialize RedactingFormatter """
+        """ constructor """
         super(RedactingFormatter, self).__init__(self.FORMAT)
         self.fields = fields
 
     def format(self, record: logging.LogRecord) -> str:
-        """ Format the log record and redact sensitive information """
-        msg = super(RedactingFormatter, self).format(record)
+        """ generates a log"""
+        msg = logging.Formatter(self.FORMAT).format(record)
         return filter_datum(self.fields, self.REDACTION, msg, self.SEPARATOR)
 
 
-def filter_datum(fields: List[str], redaction: str, message: str, separator: str) -> str:
-    """ Return the log message with sensitive data redacted """
-    for field in fields:
-        message = re.sub(rf'{field}=[^;]*', f'{field}={redaction}', message)
-    return message
+def filter_datum(fields: List[str], redaction: str, message: str,
+                 separator: str) -> str:
+    """ A function that returns the log message obfuscated """
+    lst = message.split(separator)
+
+    for f in fields:
+        for i in range(len(lst)):
+            if lst[i].startswith(f):
+                subst = f + '=' + redaction
+                lst[i] = re.sub(lst[i], '', lst[i])
+                lst[i] = subst
+    return separator.join(lst)
 
 
 def get_logger() -> logging.Logger:
-    """ Create a logger object configured for redacting sensitive information """
+    """
+    A function that takes no arguments and returns a logging.Logger object
+    """
     logger = logging.getLogger('user_data')
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
     formatter = RedactingFormatter(list(PII_FIELDS))
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
     return logger
 
 
 def get_db() -> mysql.connector.connection.MySQLConnection:
-    """ Connect to the database using environment variables and return the connection object """
-    return mysql.connector.connect(
-        user=os.getenv('PERSONAL_DATA_DB_USERNAME', 'root'),
-        password=os.getenv('PERSONAL_DATA_DB_PASSWORD', ''),
-        host=os.getenv('PERSONAL_DATA_DB_HOST', 'localhost'),
-        database=os.getenv('PERSONAL_DATA_DB_NAME')
+    """ A function that returns a connector to a database """
+    c = mysql.connector.connection.MySQLConnection(
+      user=os.getenv('PERSONAL_DATA_DB_USERNAME', 'root'),
+      password=os.getenv('PERSONAL_DATA_DB_PASSWORD', ''),
+      host=os.getenv('PERSONAL_DATA_DB_HOST', 'localhost'),
+      database=os.getenv('PERSONAL_DATA_DB_NAME')
     )
+    return c
 
 
 def main():
-    """ Main entry point for the script """
+    """ main function """
     db = get_db()
     cursor = db.cursor()
     cursor.execute("SELECT * FROM users;")
     logger = get_logger()
     for row in cursor:
-        msg = "name={}; email={}; phone={}; ssn={}; password={}; ip={}; last_login={}; user_agent={};".format(
+        msg = "name={}; email={}; phone={}; ssn={}; password={};\
+ip={}; last_login={}; user_agent={}; ".format(
             row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7]
         )
+        msg = filter_datum(list(PII_FIELDS), '***', msg, '; ')
         logger.info(msg)
     cursor.close()
     db.close()
 
 
 if __name__ == '__main__':
+    """ Only the main function should run when the module is executed """
     main()
